@@ -28,19 +28,25 @@ from opencensus.trace.tracer import Tracer
 from opencensus.trace import time_event as time_event_module
 from opencensus.ext.zipkin.trace_exporter import ZipkinExporter
 from opencensus.trace.samplers import AlwaysOnSampler
+from opencensus.trace.propagation import trace_context_http_header_format
+from opencensus.trace.span_context import SpanContext
+from opencensus.trace.trace_options import TraceOptions
+from opencensus.trace.tracers import base, noop_tracer
+from opencensus.ext.flask.flask_middleware import FlaskMiddleware
+from opencensus.trace.samplers import ProbabilitySampler
 
 
 zipkins_host=""
 admin_host=""
 # 1a. Setup the exporter
-ze = ZipkinExporter(service_name="test_main-api-tracing",
-                                host_name=zipkins_host,
-                                port=9411,
-                                endpoint='/api/v2/spans')
-# 1b. Set the tracer to use the exporter
-# 2. Configure 100% sample rate, otherwise, few traces will be sampled.
-# 3. Get the global singleton Tracer object
-tracer = Tracer(exporter=ze, sampler=AlwaysOnSampler())
+# ze = ZipkinExporter(service_name="test_main-api-tracing",
+#                                 host_name=zipkins_host,
+#                                 port=9411,
+#                                 endpoint='/api/v2/spans')
+# # 1b. Set the tracer to use the exporter
+# # 2. Configure 100% sample rate, otherwise, few traces will be sampled.
+# # 3. Get the global singleton Tracer object
+# tracer = Tracer(exporter=ze, sampler=AlwaysOnSampler())
 #
 # Constants
 #
@@ -50,6 +56,9 @@ MAIN = Blueprint("main", __name__)
 app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = 'mysql://root:MyRootPass1@@db/main'
 CORS(app)
+INTEGRATIONS = ['mysql', 'sqlalchemy', 'requests']
+config_integration.trace_integrations(INTEGRATIONS)
+middleware = FlaskMiddleware(app, exporter = ZipkinExporter(service_name="test_main-api-tracing",host_name=zipkins_host, port=9411, endpoint='/api/v2/spans'),  sampler=ProbabilitySampler(rate=1.0),)
 
 db = SQLAlchemy(app)
 
@@ -75,8 +84,8 @@ class ProductUser(db.Model):
 
 @MAIN.route('/api/products', methods=['GET'])
 def index():
-    with tracer.span(name="get_products") as span:
-            return jsonify(Product.query.all())
+    #with tracer.span(name="get_products") as span:
+    return jsonify(Product.query.all())
 
 @MAIN.route('/api/products', methods=['DELETE'])
 def delete():
@@ -92,23 +101,21 @@ def delete():
     
 @MAIN.route('/api/products/<int:id>/like', methods=['POST'])
 def like(id):
-    with tracer.span(name="inside_like") as span:
-        with tracer.span(name="calling_admin") as span:
-            req = requests.get('http://172.21.0.1:8000/api/user')
-            json = req.json()
-    with tracer.span(name="updating_like") as span:
-        try:
+    #with tracer.span(name="inside_like") as span:
+        #with tracer.span(name="calling_admin") as span:
+    req = requests.get('http://172.21.0.1:8000/api/user')
+    json = req.json()
+    #with tracer.span(name="updating_like") as span:
+    try:
+      productUser = ProductUser(user_id=json['id'], product_id=id)
+      db.session.add(productUser)
+      db.session.commit()
 
-            productUser = ProductUser(user_id=json['id'], product_id=id)
-            db.session.add(productUser)
-            db.session.commit()
+      publish('product_liked', id)
+    except:
+      abort(400, 'You already liked this product')
 
-            publish('product_liked', id)
-        except:
-
-            abort(400, 'You already liked this product')
-
-        return jsonify({
+    return jsonify({
         'message': 'success'
         })
 
